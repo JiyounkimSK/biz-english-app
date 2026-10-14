@@ -1,6 +1,7 @@
 import json
+import urllib.request
+import urllib.error
 import streamlit as st
-import google.generativeai as genai
 
 # --------------------------------------------------
 # 페이지 설정
@@ -28,18 +29,14 @@ if "feedback_msg" not in st.session_state:
     st.session_state.feedback_msg = None
 
 # --------------------------------------------------
-# Gemini 단어 생성 함수
+# Gemini REST API 직접 호출 (외부 패키지 불필요)
 # --------------------------------------------------
 def generate_daily_words(api_key: str, count: int = 30):
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel(
-        model_name="gemini-1.5-flash",
-        generation_config={"response_mime_type": "application/json", "temperature": 0.7}
-    )
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
     
     prompt = f"""
 당신은 비즈니스 영어 교육 전문가입니다.
-회사 실무(기획, 전략, 리소스 배분, 이메일, 미팅 조율, 리스크 관리 등)에서 바로 사용할 수 있는 실무 비즈니스 영어 표현 {count}개를 생성해주세요.
+회사 실무(기획, 전략, 리소스 배분, 이메일 커뮤니케이션, 미팅 조율, 리스크 관리 등)에서 바로 사용할 수 있는 실무 비즈니스 영어 표현 {count}개를 생성해주세요.
 
 반드시 아래 JSON 스키마를 준수하는 유효한 JSON 배열만 응답하세요:
 [
@@ -55,23 +52,46 @@ def generate_daily_words(api_key: str, count: int = 30):
   }}
 ]
 """
-    response = model.generate_content(prompt)
-    data = json.loads(response.text)
-    return data
+    payload = {
+        "contents": [{
+            "parts": [{"text": prompt}]
+        }],
+        "generationConfig": {
+            "responseMimeType": "application/json",
+            "temperature": 0.7
+        }
+    }
+    
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"}
+    )
+    
+    try:
+        with urllib.request.urlopen(req, timeout=30) as res:
+            res_data = json.loads(res.read().decode("utf-8"))
+            raw_text = res_data["candidates"][0]["content"]["parts"][0]["text"]
+            return json.loads(raw_text)
+    except urllib.error.HTTPError as e:
+        err_msg = e.read().decode("utf-8")
+        raise RuntimeError(f"API 오류 ({e.code}): {err_msg}")
+    except Exception as e:
+        raise RuntimeError(f"요청 실패: {str(e)}")
 
 # --------------------------------------------------
-# 메인 화면 구성 (사이드바 없이 한 화면에 표시)
+# 메인 화면 구성
 # --------------------------------------------------
 st.title("💼 Biz English Daily Study")
 
-# Secrets에 등록된 키가 있으면 자동 사용, 없으면 입력창 표시
+# Secrets에 등록된 키가 있으면 자동 사용
 default_key = ""
 try:
     default_key = st.secrets.get("GEMINI_API_KEY", "")
 except Exception:
     default_key = ""
 
-# 아직 단어를 생성하지 않은 초기 화면
+# 초기 생성 화면
 if not st.session_state.word_list:
     st.markdown("### 🚀 오늘의 학습 시작하기")
     
@@ -92,7 +112,7 @@ if not st.session_state.word_list:
     if start_btn:
         target_key = api_key_input.strip()
         if not target_key:
-            st.error("API 키를 먼저 입력해주세요.")
+            st.error("API 키를 입력해주세요.")
         else:
             with st.spinner("비즈니스 실무 단어를 지능형으로 선별 중입니다... (약 5~10초 소요)"):
                 try:
@@ -135,21 +155,21 @@ if st.session_state.current_index >= len(st.session_state.word_list):
     st.stop()
 
 # --------------------------------------------------
-# 단어 퀴즈 화면
+# 단어 퀴즈 화면 (말해보카 스타일)
 # --------------------------------------------------
 curr = st.session_state.word_list[st.session_state.current_index]
 total = len(st.session_state.word_list)
 
-# 상단 진행바
+# 상단 진행 상태
 st.progress((st.session_state.current_index) / total)
 c_left, c_right = st.columns([1, 1])
 c_left.markdown(f"**분야:** `{curr['category']}`")
 c_right.markdown(f"<div style='text-align: right; color: #64748b;'>{st.session_state.current_index + 1} / {total}</div>", unsafe_allow_html=True)
 
-# 한국어 문맥 제시
+# 한국어 업무 맥락
 st.info(f"💡 {curr['korean']}")
 
-# 글자 수 슬롯 힌트 (말해보카 방식)
+# 글자 수 슬롯 힌트
 ans = curr["answer"].strip()
 attempts = st.session_state.attempts
 
@@ -171,7 +191,7 @@ def make_slot(target_word, attempt_count):
 
 slot_display = make_slot(ans, attempts)
 
-# 영어 빈칸 문장
+# 영어 문장 표시
 st.markdown(
     f"""
     <div style="background-color: #f8fafc; padding: 22px; border-radius: 12px; border: 1px solid #e2e8f0; font-size: 19px; line-height: 1.6; margin: 15px 0;">
@@ -181,7 +201,7 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# 정답/오답 판정
+# 판정 로직
 def record_wrong():
     if not any(item['id'] == curr['id'] for item in st.session_state.wrong_notes):
         st.session_state.wrong_notes.append(curr)
@@ -212,7 +232,7 @@ def pass_question():
         st.session_state.feedback_msg = ("hint", f"💡 정답은 **{curr['answer']}** 였습니다.")
         st.session_state.is_correct = True
 
-# 입력 인터페이스
+# 입력 양식
 if not st.session_state.is_correct:
     with st.form("quiz_input_form", clear_on_submit=False):
         user_val = st.text_input("영어 단어 입력", placeholder="소문자로 입력 후 확인", label_visibility="collapsed")
@@ -229,7 +249,7 @@ if not st.session_state.is_correct:
             pass_question()
             st.rerun()
 
-# 힌트 및 정답 메시지
+# 힌트/정답 알림
 if st.session_state.feedback_msg:
     f_type, msg = st.session_state.feedback_msg
     if f_type == "correct":
@@ -237,7 +257,7 @@ if st.session_state.feedback_msg:
     else:
         st.warning(msg)
 
-# 정답 후 다음 문제 버튼
+# 다음 문제 버튼
 if st.session_state.is_correct:
     if st.button("다음 문제로 이동 ➡️", use_container_width=True):
         st.session_state.current_index += 1
