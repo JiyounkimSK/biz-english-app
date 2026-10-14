@@ -29,17 +29,22 @@ if "feedback_msg" not in st.session_state:
     st.session_state.feedback_msg = None
 
 # --------------------------------------------------
-# 3. Gemini REST API 직접 호출 함수 (404 수정 및 타임아웃 확장)
+# 3. Gemini REST API 직접 호출 함수 (모델명 자동 매칭)
 # --------------------------------------------------
 def generate_daily_words(api_key: str, count: int = 30):
-    # v1 엔드포인트와 지원 모델명 적용
-    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={api_key}"
+    # 지원 가능한 모델 후보군 (순차 시도)
+    candidate_models = [
+        "gemini-1.5-flash-latest",
+        "gemini-2.0-flash",
+        "gemini-2.5-flash",
+        "gemini-1.5-pro-latest"
+    ]
     
     prompt = f"""
 당신은 비즈니스 영어 교육 전문가입니다.
 회사 실무(기획, 전략, 리소스 배분, 이메일 커뮤니케이션, 미팅 조율, 리스크 관리 등)에서 바로 사용할 수 있는 실무 비즈니스 영어 표현 {count}개를 생성해주세요.
 
-반드시 아래 JSON 스키마를 준수하는 유효한 JSON 배열만 응답하세요. 마크다운(백틱) 없이 순수 JSON만 반환하세요:
+반드시 아래 JSON 스키마를 준수하는 유효한 JSON 배열만 응답하세요. 백틱(`) 없이 순수 JSON만 반환하세요:
 [
   {{
     "id": 1,
@@ -63,23 +68,30 @@ def generate_daily_words(api_key: str, count: int = 30):
         }
     }
     
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"}
-    )
-    
-    try:
-        # 30개 생성을 위해 타임아웃을 60초로 연장
-        with urllib.request.urlopen(req, timeout=60) as res:
-            res_data = json.loads(res.read().decode("utf-8"))
-            raw_text = res_data["candidates"][0]["content"]["parts"][0]["text"]
-            return json.loads(raw_text)
-    except urllib.error.HTTPError as e:
-        err_msg = e.read().decode("utf-8")
-        raise RuntimeError(f"API 오류 ({e.code}): {err_msg}")
-    except Exception as e:
-        raise RuntimeError(f"요청 실패: {str(e)}")
+    last_err = None
+    for model_name in candidate_models:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"}
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=60) as res:
+                res_data = json.loads(res.read().decode("utf-8"))
+                raw_text = res_data["candidates"][0]["content"]["parts"][0]["text"]
+                return json.loads(raw_text)
+        except urllib.error.HTTPError as e:
+            last_err = e.read().decode("utf-8")
+            # 404면 다음 모델 후보로 재시도
+            if e.code == 404:
+                continue
+            else:
+                raise RuntimeError(f"API 오류 ({e.code}): {last_err}")
+        except Exception as e:
+            raise RuntimeError(f"요청 실패: {str(e)}")
+            
+    raise RuntimeError(f"사용 가능한 Gemini 모델을 찾을 수 없습니다: {last_err}")
 
 # --------------------------------------------------
 # 4. API 키 자동 로딩 (Streamlit Secrets 지원)
