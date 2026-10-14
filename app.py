@@ -29,44 +29,11 @@ if "feedback_msg" not in st.session_state:
     st.session_state.feedback_msg = None
 
 # --------------------------------------------------
-# 3. Gemini REST API 직접 호출 함수 (ListModels 자동 탐색 방식)
+# 3. Gemini REST API 직접 호출 함수 (gemini-3.8-flash 적용)
 # --------------------------------------------------
 def generate_daily_words(api_key: str, count: int = 30):
-    # 1단계: 내 API 키로 현재 실제 사용 가능한 지원 모델 목록 자동 조회
-    list_url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
-    selected_model = None
-    
-    try:
-        req_list = urllib.request.Request(list_url)
-        with urllib.request.urlopen(req_list, timeout=15) as res:
-            models_data = json.loads(res.read().decode("utf-8"))
-            available_models = [
-                m["name"] for m in models_data.get("models", [])
-                if "generateContent" in m.get("supportedGenerationMethods", [])
-            ]
-            
-            # 우선순위: flash 모델 -> pro 모델 -> 목록 중 첫 번째 지원 모델
-            for m in available_models:
-                if "flash" in m.lower():
-                    selected_model = m
-                    break
-            if not selected_model:
-                for m in available_models:
-                    if "pro" in m.lower() or "gemini" in m.lower():
-                        selected_model = m
-                        break
-            if not selected_model and available_models:
-                selected_model = available_models[0]
-                
-    except Exception as e:
-        # 목록 조회가 실패할 경우의 기본 대체 경로
-        selected_model = "models/gemini-2.5-flash"
-
-    if not selected_model:
-        raise RuntimeError("사용 가능한 Gemini 모델을 찾을 수 없습니다. API 키 상태를 확인해주세요.")
-
-    # 2단계: 자동 선택된 모델로 퀴즈 데이터 생성
-    gen_url = f"https://generativelanguage.googleapis.com/v1beta/{selected_model}:generateContent?key={api_key}"
+    # 구글 공식 최신 권장 모델 지정
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key={api_key}"
     
     prompt = f"""
 당신은 비즈니스 영어 교육 전문가입니다.
@@ -92,18 +59,18 @@ def generate_daily_words(api_key: str, count: int = 30):
         }]
     }
     
-    req_gen = urllib.request.Request(
-        gen_url,
+    req = urllib.request.Request(
+        url,
         data=json.dumps(payload).encode("utf-8"),
         headers={"Content-Type": "application/json"}
     )
     
     try:
-        with urllib.request.urlopen(req_gen, timeout=60) as res:
+        with urllib.request.urlopen(req, timeout=60) as res:
             res_data = json.loads(res.read().decode("utf-8"))
             raw_text = res_data["candidates"][0]["content"]["parts"][0]["text"].strip()
             
-            # 응답에 백틱(```json ... ```)이 포함되어 있을 경우 정제
+            # 응답에 마크다운 백틱(```json ... ```)이 포함되어 있을 경우 정제
             if raw_text.startswith("```"):
                 raw_text = raw_text.split("\n", 1)[1]
             if raw_text.endswith("```"):
@@ -113,7 +80,7 @@ def generate_daily_words(api_key: str, count: int = 30):
             return json.loads(raw_text)
     except urllib.error.HTTPError as e:
         err_msg = e.read().decode("utf-8")
-        raise RuntimeError(f"API 오류 ({e.code}) [{selected_model}]: {err_msg}")
+        raise RuntimeError(f"API 오류 ({e.code}): {err_msg}")
     except Exception as e:
         raise RuntimeError(f"요청 실패: {str(e)}")
 
