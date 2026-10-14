@@ -144,4 +144,127 @@ if st.session_state.current_index >= len(st.session_state.word_list):
         for item in st.session_state.wrong_notes:
             with st.expander(f"📌 {item['answer']} ({item['category']})"):
                 st.write(f"**상황:** {item['korean']}")
-                st.write(f"**문맥:** {item['prefix']} **{item['answer']}
+                st.write(f"**문맥:** {item['prefix']} **{item['answer']}** {item['suffix']}")
+                st.caption(item['explanation'])
+
+    if st.button("처음부터 다시 학습하기", use_container_width=True):
+        st.session_state.current_index = 0
+        st.session_state.attempts = 0
+        st.session_state.is_correct = False
+        st.session_state.feedback_msg = None
+        st.rerun()
+    st.stop()
+
+# --------------------------------------------------
+# 7. 단어 퀴즈 화면 (말해보카 방식)
+# --------------------------------------------------
+curr = st.session_state.word_list[st.session_state.current_index]
+total = len(st.session_state.word_list)
+
+# 상단 진행 바
+st.progress((st.session_state.current_index) / total)
+c_left, c_right = st.columns([1, 1])
+c_left.markdown(f"**분야:** `{curr['category']}`")
+c_right.markdown(f"<div style='text-align: right; color: #64748b;'>{st.session_state.current_index + 1} / {total}</div>", unsafe_allow_html=True)
+
+# 한국어 문맥 제시
+st.info(f"💡 {curr['korean']}")
+
+# 글자 수 슬롯 힌트 (0~1회 오답: 전체 빈칸 / 2회: 첫 글자 / 3회: 두 번째 글자까지)
+ans = curr["answer"].strip()
+attempts = st.session_state.attempts
+
+def make_slot(target_word, attempt_count):
+    tokens = target_word.split(" ")
+    res = []
+    for token in tokens:
+        if attempt_count <= 1:
+            res.append(" ".join(["_"] * len(token)))
+        elif attempt_count == 2:
+            first = token[0]
+            rest = " ".join(["_"] * (len(token) - 1)) if len(token) > 1 else ""
+            res.append(f"{first} {rest}".strip())
+        else:
+            first_two = token[:2]
+            rest = " ".join(["_"] * (len(token) - 2)) if len(token) > 2 else ""
+            res.append(f"{first_two[0]} {first_two[1:]} {rest}".strip())
+    return "   ".join(res)
+
+slot_display = make_slot(ans, attempts)
+
+# 빈칸 문장 카드
+st.markdown(
+    f"""
+    <div style="background-color: #f8fafc; padding: 22px; border-radius: 12px; border: 1px solid #e2e8f0; font-size: 19px; line-height: 1.6; margin: 15px 0;">
+        {curr['prefix']} <strong style="color: #2563eb; letter-spacing: 2px;">[ {slot_display} ]</strong> {curr['suffix']}
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
+# 오답 기록 함수
+def record_wrong():
+    if not any(item['id'] == curr['id'] for item in st.session_state.wrong_notes):
+        st.session_state.wrong_notes.append(curr)
+
+# 정답 판별
+def check_answer(user_input: str):
+    clean_input = user_input.strip().lower()
+    if clean_input == ans.lower():
+        st.session_state.is_correct = True
+        st.session_state.feedback_msg = ("correct", f"🎉 **정답입니다!**\n\n📌 **실무 팁:** {curr['explanation']}")
+    else:
+        st.session_state.attempts += 1
+        record_wrong()
+        if st.session_state.attempts == 1:
+            st.session_state.feedback_msg = ("hint", f"❌ **다시 시도해보세요!**\n\n💡 **1차 힌트:** {curr['clue']}")
+        elif st.session_state.attempts == 2:
+            st.session_state.feedback_msg = ("hint", f"❌ **첫 글자 힌트**가 열렸습니다! 위 빈칸을 확인하세요.")
+        else:
+            st.session_state.feedback_msg = ("hint", f"❌ **두 번째 글자 힌트**가 열렸습니다! 앞 두 글자를 참고하세요.")
+
+# 모름(패스) 처리
+def pass_question():
+    st.session_state.attempts += 1
+    record_wrong()
+    if st.session_state.attempts == 1:
+        st.session_state.feedback_msg = ("hint", f"💡 **1차 힌트:** {curr['clue']}")
+    elif st.session_state.attempts == 2:
+        st.session_state.feedback_msg = ("hint", f"💡 **첫 글자 힌트**가 열렸습니다!")
+    else:
+        st.session_state.feedback_msg = ("hint", f"💡 정답은 **{curr['answer']}** 였습니다.")
+        st.session_state.is_correct = True
+
+# 입력 폼
+if not st.session_state.is_correct:
+    with st.form("quiz_input_form", clear_on_submit=False):
+        user_val = st.text_input("영어 단어 입력", placeholder="소문자로 입력 후 확인", label_visibility="collapsed")
+        b1, b2 = st.columns([3, 1])
+        with b1:
+            sub = st.form_submit_button("확인 (제출)", use_container_width=True)
+        with b2:
+            skip = st.form_submit_button("모름 (힌트)", use_container_width=True)
+            
+        if sub and user_val:
+            check_answer(user_val)
+            st.rerun()
+        elif skip:
+            pass_question()
+            st.rerun()
+
+# 피드백 메시지 박스
+if st.session_state.feedback_msg:
+    f_type, msg = st.session_state.feedback_msg
+    if f_type == "correct":
+        st.success(msg)
+    else:
+        st.warning(msg)
+
+# 정답 후 다음 문제 버튼
+if st.session_state.is_correct:
+    if st.button("다음 문제로 이동 ➡️", use_container_width=True):
+        st.session_state.current_index += 1
+        st.session_state.attempts = 0
+        st.session_state.is_correct = False
+        st.session_state.feedback_msg = None
+        st.rerun()
