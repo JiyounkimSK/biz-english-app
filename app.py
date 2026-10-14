@@ -29,16 +29,17 @@ if "feedback_msg" not in st.session_state:
     st.session_state.feedback_msg = None
 
 # --------------------------------------------------
-# 3. Gemini REST API 직접 호출 함수 (외부 패키지 설치 불필요)
+# 3. Gemini REST API 직접 호출 함수 (404 수정 및 타임아웃 확장)
 # --------------------------------------------------
 def generate_daily_words(api_key: str, count: int = 30):
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+    # v1 엔드포인트와 지원 모델명 적용
+    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={api_key}"
     
     prompt = f"""
 당신은 비즈니스 영어 교육 전문가입니다.
 회사 실무(기획, 전략, 리소스 배분, 이메일 커뮤니케이션, 미팅 조율, 리스크 관리 등)에서 바로 사용할 수 있는 실무 비즈니스 영어 표현 {count}개를 생성해주세요.
 
-반드시 아래 JSON 스키마를 준수하는 유효한 JSON 배열만 응답하세요. 백틱(`)이나 마크다운 없이 순수 JSON만 반환하세요:
+반드시 아래 JSON 스키마를 준수하는 유효한 JSON 배열만 응답하세요. 마크다운(백틱) 없이 순수 JSON만 반환하세요:
 [
   {{
     "id": 1,
@@ -69,7 +70,8 @@ def generate_daily_words(api_key: str, count: int = 30):
     )
     
     try:
-        with urllib.request.urlopen(req, timeout=30) as res:
+        # 30개 생성을 위해 타임아웃을 60초로 연장
+        with urllib.request.urlopen(req, timeout=60) as res:
             res_data = json.loads(res.read().decode("utf-8"))
             raw_text = res_data["candidates"][0]["content"]["parts"][0]["text"]
             return json.loads(raw_text)
